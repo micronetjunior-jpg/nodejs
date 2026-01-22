@@ -6,6 +6,7 @@
   "author": "alphasec",
   "license": "MIT",
   "dependencies": {
+    "mediasoup": "^3.13.0",
     "express": "^4.19.2"
   },
   "scripts": {

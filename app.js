@@ -1,49 +1,56 @@
 import express from "express";
-import mediasoup from "mediasoup";
+import fetch from "node-fetch";
+import { initMediasoup, createAnswerFromOffer } from "./mediasoup.js";
+import "dotenv/config";
 
 const app = express();
 app.use(express.json());
 
-let worker;
-let router;
+await initMediasoup(process.env.PUBLIC_IP);
 
-(async () => {
-  worker = await mediasoup.createWorker({
-    rtcMinPort: 40000,
-    rtcMaxPort: 40100,
-  });
+app.post("/webhook", async (req, res) => {
+  try {
+    const change = req.body.entry?.[0]?.changes?.[0]?.value;
+    const call = change?.calls?.[0];
 
-  router = await worker.createRouter({
-    mediaCodecs: [
-      {
-        kind: "audio",
-        mimeType: "audio/opus",
-        clockRate: 48000,
-        channels: 2,
+    if (!call || call.event !== "connect") {
+      return res.sendStatus(200);
+    }
+
+    console.log("📞 Incoming call", call.id);
+
+    const sdpOffer = call.session.sdp;
+
+    const sdpAnswer = await createAnswerFromOffer(
+      sdpOffer,
+      process.env.PUBLIC_IP
+    );
+
+    const url = `https://graph.facebook.com/v19.0/${process.env.PHONE_NUMBER_ID}/calls/${call.id}`;
+
+    const metaResp = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${process.env.META_TOKEN}`,
+        "Content-Type": "application/json"
       },
-    ],
-  });
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        sdp_type: "answer",
+        sdp: sdpAnswer
+      })
+    });
 
-  console.log("✅ mediasoup listo");
-})();
+    const text = await metaResp.text();
+    console.log("📡 Meta response:", text);
 
-app.post("/webrtc/answer", async (req, res) => {
-  const { sdp } = req.body;
-
-  const transport = await router.createWebRtcTransport({
-    listenIps: [{ ip: "0.0.0.0", announcedIp: process.env.PUBLIC_IP }],
-    enableUdp: true,
-    enableTcp: true,
-    preferUdp: true,
-  });
-
-  // mediasoup genera SDP válido
-  await transport.setRemoteSdp(sdp);
-  const answer = await transport.getLocalSdp();
-
-  res.json({ sdp: answer });
+    res.sendStatus(200);
+  } catch (err) {
+    console.error("❌ Error:", err);
+    res.sendStatus(500);
+  }
 });
 
-app.listen(3000, () =>
-  console.log("🚀 mediasoup escuchando en :3000")
-);
+app.listen(process.env.PORT, () => {
+  console.log("🚀 Server listening on", process.env.PORT);
+});

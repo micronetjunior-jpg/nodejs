@@ -1,21 +1,49 @@
-const express = require('express');
-const path = require('path');
-const indexRouter = require('./routes/index');
+import express from "express";
+import mediasoup from "mediasoup";
 
 const app = express();
-const PORT = 3000;
+app.use(express.json());
 
-// Serve static files from the "public" directory
-app.use(express.static(path.join(__dirname, 'public')));
+let worker;
+let router;
 
-// Use the router for handling routes
-app.use('/', indexRouter);
-
-// Catch-all route for handling 404 errors
-app.use((req, res, next) => {
-    res.status(404).sendFile(path.join(__dirname, 'views', '404.html'));
+(async () => {
+  worker = await mediasoup.createWorker({
+    rtcMinPort: 40000,
+    rtcMaxPort: 40100,
   });
 
-app.listen(PORT, () => {
-  console.log(`Server running at http://localhost:${PORT}/`);
+  router = await worker.createRouter({
+    mediaCodecs: [
+      {
+        kind: "audio",
+        mimeType: "audio/opus",
+        clockRate: 48000,
+        channels: 2,
+      },
+    ],
+  });
+
+  console.log("✅ mediasoup listo");
+})();
+
+app.post("/webrtc/answer", async (req, res) => {
+  const { sdp } = req.body;
+
+  const transport = await router.createWebRtcTransport({
+    listenIps: [{ ip: "0.0.0.0", announcedIp: process.env.PUBLIC_IP }],
+    enableUdp: true,
+    enableTcp: true,
+    preferUdp: true,
+  });
+
+  // mediasoup genera SDP válido
+  await transport.setRemoteSdp(sdp);
+  const answer = await transport.getLocalSdp();
+
+  res.json({ sdp: answer });
 });
+
+app.listen(3000, () =>
+  console.log("🚀 mediasoup escuchando en :3000")
+);
